@@ -1,0 +1,626 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// SISTEMA Y ADMINISTRACIÓN
+// ============================================================
+
+model Entidad {
+  id         String       @id @default(cuid())
+  nit        String       @unique
+  nombre     String
+  codigoDane String?
+  nivel      NivelEntidad
+  activa     Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  vigencias Vigencia[]
+  usuarios  Usuario[]
+
+  @@map("entidades")
+}
+
+enum NivelEntidad {
+  NACIONAL
+  DEPARTAMENTAL
+  MUNICIPAL
+  DESCENTRALIZADA
+}
+
+model Vigencia {
+  id            String         @id @default(cuid())
+  anio          Int
+  estado        EstadoVigencia @default(ABIERTA)
+  fechaApertura DateTime
+  fechaCierre   DateTime?
+  entidadId     String
+  entidad       Entidad        @relation(fields: [entidadId], references: [id])
+  createdAt     DateTime       @default(now())
+
+  comprobantes            Comprobante[]
+  apropiaciones           Apropiacion[]
+  cdps                    CDP[]
+  registrosPresupuestales RP[]
+  pagos                   Pago[]
+  recaudos                Recaudo[]
+  consecutivos            Consecutivo[]
+
+  @@unique([entidadId, anio])
+  @@map("vigencias")
+}
+
+enum EstadoVigencia {
+  ABIERTA
+  EN_CIERRE
+  CERRADA
+}
+
+model Usuario {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  nombre       String
+  passwordHash String
+  rol          RolUsuario
+  activo       Boolean    @default(true)
+  entidadId    String
+  entidad      Entidad    @relation(fields: [entidadId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  comprobantesCreados   Comprobante[] @relation("comprobanteCreador")
+  comprobantesAprobados Comprobante[] @relation("comprobanteAprobador")
+  cdpsCreados           CDP[]         @relation("cdpCreador")
+  cdpsAprobados         CDP[]         @relation("cdpAprobador")
+  rpsCreados            RP[]          @relation("rpCreador")
+  rpsAprobados          RP[]          @relation("rpAprobador")
+  pagosCreados          Pago[]        @relation("pagoCreador")
+  pagosAprobados        Pago[]        @relation("pagoAprobador")
+  auditLogs             AuditLog[]
+
+  @@map("usuarios")
+}
+
+enum RolUsuario {
+  ADMINISTRADOR
+  JEFE_AREA
+  AUXILIAR
+}
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  tabla           String
+  registroId      String
+  accion          AccionAudit
+  datosAnteriores Json?
+  datosNuevos     Json?
+  usuarioId       String
+  usuario         Usuario     @relation(fields: [usuarioId], references: [id])
+  ipAddress       String?
+  createdAt       DateTime    @default(now())
+
+  @@index([tabla, registroId])
+  @@index([usuarioId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+enum AccionAudit {
+  CREAR
+  ACTUALIZAR
+  ELIMINAR
+  APROBAR
+  ANULAR
+}
+
+model Consecutivo {
+  id         String          @id @default(cuid())
+  vigenciaId String
+  vigencia   Vigencia        @relation(fields: [vigenciaId], references: [id])
+  tipo       TipoConsecutivo
+  prefijo    String?
+  siguiente  Int             @default(1)
+
+  @@unique([vigenciaId, tipo])
+  @@map("consecutivos")
+}
+
+enum TipoConsecutivo {
+  COMPROBANTE_INGRESO
+  COMPROBANTE_EGRESO
+  COMPROBANTE_GENERAL
+  CDP
+  RP
+  ORDEN_PAGO
+  RECAUDO
+}
+
+// ============================================================
+// CONTABILIDAD
+// ============================================================
+
+model CuentaContable {
+  id                  String           @id @default(cuid())
+  codigo              String           @unique
+  nombre              String
+  nivel               Int
+  naturaleza          NaturalezaCuenta
+  tipo                TipoCuenta
+  codigoPadre         String?
+  cuentaPadre         CuentaContable?  @relation("jerarquiaCuenta", fields: [codigoPadre], references: [codigo])
+  cuentasHijas        CuentaContable[] @relation("jerarquiaCuenta")
+  activa              Boolean          @default(true)
+  requiereTercero     Boolean          @default(false)
+  requiereCentroCosto Boolean          @default(false)
+  createdAt           DateTime         @default(now())
+
+  movimientos MovimientoContable[]
+
+  @@index([nivel])
+  @@index([codigoPadre])
+  @@map("cuentas_contables")
+}
+
+enum NaturalezaCuenta {
+  DEBITO
+  CREDITO
+}
+
+enum TipoCuenta {
+  TITULO
+  MOVIMIENTO
+}
+
+model Comprobante {
+  id              String          @id @default(cuid())
+  numero          Int
+  tipo            TipoComprobante
+  fecha           DateTime
+  concepto        String
+  estado          EstadoDocumento @default(BORRADOR)
+  vigenciaId      String
+  vigencia        Vigencia        @relation(fields: [vigenciaId], references: [id])
+  creadoPorId     String
+  creadoPor       Usuario         @relation("comprobanteCreador", fields: [creadoPorId], references: [id])
+  aprobadoPorId   String?
+  aprobadoPor     Usuario?        @relation("comprobanteAprobador", fields: [aprobadoPorId], references: [id])
+  fechaAprobacion DateTime?
+  pagoId          String?         @unique
+  pago            Pago?           @relation(fields: [pagoId], references: [id])
+  recaudoId       String?         @unique
+  recaudo         Recaudo?        @relation(fields: [recaudoId], references: [id])
+
+  movimientos MovimientoContable[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vigenciaId, tipo, numero])
+  @@index([fecha])
+  @@index([estado])
+  @@map("comprobantes")
+}
+
+enum TipoComprobante {
+  INGRESO
+  EGRESO
+  GENERAL
+}
+
+enum EstadoDocumento {
+  BORRADOR
+  PENDIENTE_APROBACION
+  APROBADO
+  ANULADO
+}
+
+model MovimientoContable {
+  id            String         @id @default(cuid())
+  comprobanteId String
+  comprobante   Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  cuentaId      String
+  cuenta        CuentaContable @relation(fields: [cuentaId], references: [id])
+  terceroId     String?
+  tercero       Tercero?       @relation(fields: [terceroId], references: [id])
+  descripcion   String?
+  debito        Decimal        @default(0)
+  credito       Decimal        @default(0)
+
+  @@index([comprobanteId])
+  @@index([cuentaId])
+  @@index([terceroId])
+  @@map("movimientos_contables")
+}
+
+// ============================================================
+// PRESUPUESTO
+// ============================================================
+
+model RubroPresupuestal {
+  id          String              @id @default(cuid())
+  codigo      String              @unique
+  nombre      String
+  tipo        TipoRubro
+  nivel       Int
+  codigoPadre String?
+  rubroPadre  RubroPresupuestal?  @relation("jerarquiaRubro", fields: [codigoPadre], references: [codigo])
+  rubrosHijos RubroPresupuestal[] @relation("jerarquiaRubro")
+  esTitulo    Boolean             @default(false)
+  activo      Boolean             @default(true)
+
+  apropiaciones Apropiacion[]
+  itemsCdp      ItemCDP[]
+  itemsRp       ItemRP[]
+
+  @@map("rubros_presupuestales")
+}
+
+enum TipoRubro {
+  INGRESO
+  GASTO
+}
+
+model Apropiacion {
+  id                       String            @id @default(cuid())
+  vigenciaId               String
+  vigencia                 Vigencia          @relation(fields: [vigenciaId], references: [id])
+  rubroId                  String
+  rubro                    RubroPresupuestal @relation(fields: [rubroId], references: [id])
+  apropiacionInicial       Decimal
+  adiciones                Decimal           @default(0)
+  reducciones              Decimal           @default(0)
+  creditosContraparte      Decimal           @default(0)
+  contrareditosContraparte Decimal           @default(0)
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+
+  @@unique([vigenciaId, rubroId])
+  @@map("apropiaciones")
+}
+
+model CDP {
+  id              String          @id @default(cuid())
+  numero          Int
+  fecha           DateTime
+  objeto          String
+  estado          EstadoDocumento @default(BORRADOR)
+  vigenciaId      String
+  vigencia        Vigencia        @relation(fields: [vigenciaId], references: [id])
+  solicitante     String
+  dependencia     String
+  creadoPorId     String
+  creadoPor       Usuario         @relation("cdpCreador", fields: [creadoPorId], references: [id])
+  aprobadoPorId   String?
+  aprobadoPor     Usuario?        @relation("cdpAprobador", fields: [aprobadoPorId], references: [id])
+  fechaAprobacion DateTime?
+
+  items                   ItemCDP[]
+  registrosPresupuestales RP[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vigenciaId, numero])
+  @@index([fecha])
+  @@index([estado])
+  @@map("cdps")
+}
+
+model ItemCDP {
+  id      String            @id @default(cuid())
+  cdpId   String
+  cdp     CDP               @relation(fields: [cdpId], references: [id], onDelete: Cascade)
+  rubroId String
+  rubro   RubroPresupuestal @relation(fields: [rubroId], references: [id])
+  valor   Decimal
+
+  @@index([cdpId])
+  @@map("items_cdp")
+}
+
+model RP {
+  id              String          @id @default(cuid())
+  numero          Int
+  fecha           DateTime
+  objeto          String
+  estado          EstadoDocumento @default(BORRADOR)
+  vigenciaId      String
+  vigencia        Vigencia        @relation(fields: [vigenciaId], references: [id])
+  cdpId           String
+  cdp             CDP             @relation(fields: [cdpId], references: [id])
+  terceroId       String
+  tercero         Tercero         @relation(fields: [terceroId], references: [id])
+  tipoCompromiso  TipoCompromiso
+  numeroContrato  String?
+  creadoPorId     String
+  creadoPor       Usuario         @relation("rpCreador", fields: [creadoPorId], references: [id])
+  aprobadoPorId   String?
+  aprobadoPor     Usuario?        @relation("rpAprobador", fields: [aprobadoPorId], references: [id])
+  fechaAprobacion DateTime?
+
+  items ItemRP[]
+  pagos Pago[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vigenciaId, numero])
+  @@index([cdpId])
+  @@index([terceroId])
+  @@map("registros_presupuestales")
+}
+
+enum TipoCompromiso {
+  CONTRATO
+  ORDEN_COMPRA
+  ORDEN_SERVICIO
+  NOMINA
+  SERVICIOS_PUBLICOS
+  TRANSFERENCIAS
+  SENTENCIAS
+  OTROS
+}
+
+model ItemRP {
+  id      String            @id @default(cuid())
+  rpId    String
+  rp      RP                @relation(fields: [rpId], references: [id], onDelete: Cascade)
+  rubroId String
+  rubro   RubroPresupuestal @relation(fields: [rubroId], references: [id])
+  valor   Decimal
+
+  @@index([rpId])
+  @@map("items_rp")
+}
+
+model PAC {
+  id              String    @id @default(cuid())
+  vigenciaId      String
+  rubroId         String
+  mes             Int
+  tipo            TipoRubro
+  valorProgramado Decimal
+  valorRecaudado  Decimal   @default(0)
+  valorPagado     Decimal   @default(0)
+
+  @@unique([vigenciaId, rubroId, mes, tipo])
+  @@map("pac")
+}
+
+// ============================================================
+// TESORERÍA
+// ============================================================
+
+model CuentaBancaria {
+  id           String             @id @default(cuid())
+  banco        String
+  numeroCuenta String             @unique
+  tipoCuenta   TipoCuentaBancaria
+  nombre       String
+  activa       Boolean            @default(true)
+  saldoInicial Decimal            @default(0)
+
+  pagos                Pago[]
+  recaudos             Recaudo[]
+  movimientosBancarios MovimientoBancario[]
+
+  @@map("cuentas_bancarias")
+}
+
+enum TipoCuentaBancaria {
+  CORRIENTE
+  AHORROS
+}
+
+model Pago {
+  id               String          @id @default(cuid())
+  numero           Int
+  fecha            DateTime
+  valor            Decimal
+  valorNeto        Decimal
+  concepto         String
+  estado           EstadoDocumento @default(BORRADOR)
+  medioPago        MedioPago
+  vigenciaId       String
+  vigencia         Vigencia        @relation(fields: [vigenciaId], references: [id])
+  rpId             String
+  rp               RP              @relation(fields: [rpId], references: [id])
+  terceroId        String
+  tercero          Tercero         @relation(fields: [terceroId], references: [id])
+  cuentaBancariaId String
+  cuentaBancaria   CuentaBancaria  @relation(fields: [cuentaBancariaId], references: [id])
+  creadoPorId      String
+  creadoPor        Usuario         @relation("pagoCreador", fields: [creadoPorId], references: [id])
+  aprobadoPorId    String?
+  aprobadoPor      Usuario?        @relation("pagoAprobador", fields: [aprobadoPorId], references: [id])
+  fechaAprobacion  DateTime?
+
+  retenciones RetencionAplicada[]
+  comprobante Comprobante?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vigenciaId, numero])
+  @@map("pagos")
+}
+
+enum MedioPago {
+  TRANSFERENCIA
+  CHEQUE
+  EFECTIVO
+}
+
+model Recaudo {
+  id               String          @id @default(cuid())
+  numero           Int
+  fecha            DateTime
+  valor            Decimal
+  concepto         String
+  fuente           String
+  estado           EstadoDocumento @default(BORRADOR)
+  vigenciaId       String
+  vigencia         Vigencia        @relation(fields: [vigenciaId], references: [id])
+  terceroId        String?
+  tercero          Tercero?        @relation(fields: [terceroId], references: [id])
+  cuentaBancariaId String
+  cuentaBancaria   CuentaBancaria  @relation(fields: [cuentaBancariaId], references: [id])
+
+  comprobante Comprobante?
+
+  createdAt DateTime @default(now())
+
+  @@unique([vigenciaId, numero])
+  @@map("recaudos")
+}
+
+model MovimientoBancario {
+  id                  String         @id @default(cuid())
+  cuentaBancariaId    String
+  cuentaBancaria      CuentaBancaria @relation(fields: [cuentaBancariaId], references: [id])
+  fecha               DateTime
+  referencia          String
+  descripcion         String
+  debito              Decimal        @default(0)
+  credito             Decimal        @default(0)
+  conciliado          Boolean        @default(false)
+  pagoIdConciliado    String?
+  recaudoIdConciliado String?
+
+  @@index([cuentaBancariaId, fecha])
+  @@index([conciliado])
+  @@map("movimientos_bancarios")
+}
+
+// ============================================================
+// TERCEROS Y TRIBUTARIO
+// ============================================================
+
+model Tercero {
+  id                  String            @id @default(cuid())
+  tipoDocumento       TipoDocumento
+  numeroDocumento     String            @unique
+  digitoVerificacion  String?
+  razonSocial         String?
+  primerNombre        String?
+  segundoNombre       String?
+  primerApellido      String?
+  segundoApellido     String?
+  nombreCompleto      String
+  tipoPersona         TipoPersona
+  direccion           String?
+  ciudad              String?
+  departamento        String?
+  telefono            String?
+  email               String?
+  responsableIva      Boolean           @default(false)
+  granContribuyente   Boolean           @default(false)
+  regimenTributario   RegimenTributario?
+  actividadEconomica  String?
+  activo              Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  movimientos             MovimientoContable[]
+  registrosPresupuestales RP[]
+  pagos                   Pago[]
+  recaudos                Recaudo[]
+  retenciones             RetencionAplicada[]
+
+  @@map("terceros")
+}
+
+enum TipoDocumento {
+  CC
+  CE
+  NIT
+  PASAPORTE
+  TI
+}
+
+enum TipoPersona {
+  NATURAL
+  JURIDICA
+}
+
+enum RegimenTributario {
+  RESPONSABLE_IVA
+  NO_RESPONSABLE_IVA
+  GRAN_CONTRIBUYENTE
+  REGIMEN_SIMPLE
+}
+
+model TipoRetencion {
+  id               String        @id @default(cuid())
+  codigo           String        @unique
+  nombre           String
+  impuesto         TipoImpuesto
+  porcentaje       Decimal
+  baseMinima       Decimal       @default(0)
+  baseMinimaEnUvt  Boolean       @default(true)
+  cuentaContableId String?
+  activo           Boolean       @default(true)
+
+  retenciones RetencionAplicada[]
+
+  @@map("tipos_retencion")
+}
+
+enum TipoImpuesto {
+  RETENCION_FUENTE
+  RETENCION_IVA
+  RETENCION_ICA
+  ESTAMPILLA
+  CONTRIBUCION
+}
+
+model RetencionAplicada {
+  id              String        @id @default(cuid())
+  pagoId          String
+  pago            Pago          @relation(fields: [pagoId], references: [id], onDelete: Cascade)
+  terceroId       String
+  tercero         Tercero       @relation(fields: [terceroId], references: [id])
+  tipoRetencionId String
+  tipoRetencion   TipoRetencion @relation(fields: [tipoRetencionId], references: [id])
+  base            Decimal
+  porcentaje      Decimal
+  valor           Decimal
+
+  @@index([pagoId])
+  @@index([terceroId])
+  @@index([tipoRetencionId])
+  @@map("retenciones_aplicadas")
+}
+
+model ParametroTributario {
+  id            String  @id @default(cuid())
+  anio          Int     @unique
+  valorUvt      Decimal
+  salarioMinimo Decimal
+
+  @@map("parametros_tributarios")
+}
+
+// ============================================================
+// MOTOR DE REGLAS NORMATIVAS
+// ============================================================
+
+model ReglaNormativa {
+  id          String   @id @default(cuid())
+  modulo      String
+  nombre      String
+  descripcion String
+  condicion   Json
+  accion      Json
+  activa      Boolean  @default(true)
+  normativa   String?
+  createdAt   DateTime @default(now())
+
+  @@map("reglas_normativas")
+}
